@@ -11,10 +11,10 @@ import statistics
 seed = 123
 np.random.seed(seed)
 
-b0 = np.array([[-0.6, 0.3, 0.1, 0.1, -0.3]])
-b1 = np.array([[1.6, -0.8, -0.1, -0.1, 0.3]])
+b0 = np.round(np.random.uniform(-1, 2, size=(1,100)), 1)
+b1 = np.round(np.random.uniform(-1, 2, size=(1,100)), 1)
 dy = 1
-dz = 20
+dz = 100
 
 
 def main_cp(N, tvc, SIMSIZE=120, gap=True):
@@ -26,7 +26,6 @@ def main_cp(N, tvc, SIMSIZE=120, gap=True):
     for k in range(SIMSIZE):
         # generate raw data 
         raw_data = generate_data(N, b0, b1)
-        
         # generate post-treatment data
         A0, A1, data = treatment(raw_data, dy, dz)
         
@@ -87,14 +86,14 @@ tvc = true_vcmdim(b0, b1)
 # main run
 gap=True #record estimation error (True) or estimation value (False)
 
-sizelist = [200, 600, 800]
+sizelist = [200, 600, 1000]
 ridge_reslist = []
 knn_reslist = []
 cot_reslist_mean = []
 cot_reslist_std = []
 
 for sz in sizelist:
-    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=100, gap=gap)
+    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=500, gap=gap)
     ridge_reslist.append(ridge_res)
     knn_reslist.append(knn_res)
     cot_reslist_mean.append(statistics.mean(cot_res))
@@ -114,7 +113,7 @@ plt.xlabel('Sample size')
 plt.ylabel('Average relative error')
 # plt.ylim(-0.01, 0.17)
 plt.legend()
-# plt.savefig("new500error_well_error.pdf")
+plt.savefig("100dim_test_a.pdf")
 plt.show()
 
 

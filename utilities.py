@@ -891,6 +891,48 @@ def cluster_z_values(data, c=0.3):
 
     return clustered_data
 
+from sklearn.cluster import KMeans
+
+def discretize_high_dim_kmeans(data, n_clusters=None, c=0.3):
+    """
+    使用K-means对高维协变量进行全局离散化。
+    
+    Args:
+        data: 形状为 (n_samples, dz+1) 的数组，dz=20。
+        n_clusters: 聚类数量，若为None则根据样本量自动计算。
+        c: 控制聚类数量的参数（当n_clusters为None时使用）。
+        
+    Returns:
+        离散化后的数组，形状与输入相同。
+    """
+    n_samples = data.shape[0]
+    data = data[:, 1:]
+    
+    # 自动确定聚类数量
+    if n_clusters is None:
+        n_clusters = max(2, int(c * n_samples**(1/3)))
+    
+    # 标准化数据（K-means对尺度敏感）
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(data)
+    
+    # 应用K-means
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    cluster_labels = kmeans.fit_predict(data_scaled)
+    
+    # 为每个样本分配其所属簇的中心
+    discretized_data = np.zeros_like(data)
+    for i in range(n_clusters):
+        mask = (cluster_labels == i)
+        discretized_data[mask] = kmeans.cluster_centers_[i]
+    
+    # 反标准化回原始尺度
+    discretized_data = scaler.inverse_transform(discretized_data)
+    cluster_data = np.column_stack((data[:, 0], discretized_data))
+    
+    return cluster_data
+
 
 from collections import defaultdict
 
@@ -907,8 +949,22 @@ def empirical_distribution(data):
             - weights: A 1D numpy array of corresponding weights (frequencies).
     """
     support, counts = np.unique(data, return_counts=True)
-    weights = counts / len(data)
+    weights = counts.astype(float) / len(data)
     return support, weights
+
+def unique_rows_hash(data):
+    # 不进行四舍五入，直接使用浮点数
+    counter = {}
+    for row in data:
+        key = tuple(row)
+        counter[key] = counter.get(key, 0) + 1
+    
+    unique_rows = np.array([list(k) for k in counter.keys()])
+    counts = np.array(list(counter.values()), dtype=float)
+    weights = counts / counts.sum()
+    
+    return unique_rows, weights
+
 
 
 def calculate_empirical_distributions(clustered_data):
@@ -928,18 +984,20 @@ def calculate_empirical_distributions(clustered_data):
             - conditional_y_distributions: Dictionary storing empirical distributions for Y given each z in z_support
     """
 
-    z_values = clustered_data[:, 1]
+    z_values = clustered_data[:, 1:]
     y_values = clustered_data[:, 0]
 
-    z_support, z_weights = empirical_distribution(z_values)
+    z_support, z_weights = unique_rows_hash(z_values)
 
     conditional_y_distributions = defaultdict(lambda: (np.array([]), np.array([])))
 
     for z in z_support:
-        indices = np.where(z_values == z)
+        # 查找二维索引
+        row_indices, col_indices = np.where(z_values == z)
+        indices = row_indices
         corresponding_y = y_values[indices]
         y_support, y_weights = empirical_distribution(corresponding_y)
-        conditional_y_distributions[z] = (y_support, y_weights)
+        conditional_y_distributions[tuple(z)] = (y_support, y_weights)
 
     return z_support, z_weights, conditional_y_distributions
 
@@ -960,7 +1018,21 @@ def ot_compute(dist_a, dist_b, p):
     support_b, weights_b = dist_b
 
     # Compute the cost matrix
-    M = np.abs(np.subtract.outer(support_a, support_b)) ** p
+    if support_a.ndim == 1:
+        # 一维情况（原代码逻辑）
+        M = np.abs(np.subtract.outer(support_a, support_b)) ** p
+    else:
+        # 高维情况：计算欧氏距离矩阵
+        n_a, n_b = len(support_a), len(support_b)
+        M = np.zeros((n_a, n_b))
+        
+        for i in range(n_a):
+            for j in range(n_b):
+                # 计算欧氏距离的p次方
+                M[i, j] = np.sum(np.abs(support_a[i] - support_b[j]) ** p)
+        
+        # 可选：归一化成本矩阵以提高数值稳定性
+        M = M / np.max(M) if np.max(M) > 0 else M
 
 
     # Compute the OT distance and the transport matrix
@@ -970,13 +1042,13 @@ def ot_compute(dist_a, dist_b, p):
     return ot_distance, transport_matrix
     
 
-def cot_estimator(control_data, treatment_data, c=1.):
+def cot_estimator(control_data, treatment_data, c=0.5):
     """
     Estimates the Conditional Optimal Transport (COT) distance between two datasets.
     """
 
-    clustered_control_data = cluster_z_values(control_data, c)
-    clustered_treatment_data = cluster_z_values(treatment_data, c)
+    clustered_control_data = discretize_high_dim_kmeans(control_data)
+    clustered_treatment_data = discretize_high_dim_kmeans(treatment_data)
 
     # Step 1: Compute empirical distributions for each dataset
     control_z_support, control_z_weights, control_conditional_y = calculate_empirical_distributions(clustered_control_data)
@@ -991,7 +1063,7 @@ def cot_estimator(control_data, treatment_data, c=1.):
     M = np.zeros((len(control_z_support), len(treatment_z_support)))
     for i, z_c in enumerate(control_z_support):
         for j, z_t in enumerate(treatment_z_support):
-            ot_d, _ = ot_compute(control_conditional_y[z_c], treatment_conditional_y[z_t], 2)
+            ot_d, _ = ot_compute(control_conditional_y[tuple(z_c)], treatment_conditional_y[tuple(z_t)], 2)
             M[i, j] = ot_d
 
     cot_estimate = np.sum(M * L)

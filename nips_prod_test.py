@@ -3,18 +3,18 @@ from dualbounds.generic import DualBounds
 
 import numpy as np
 from utilities import generate_data_prod, treatment, cot_estimator
-from truevalue import true_vc_prod1dim
+from truevalue import true_vc_prod20dim
 import matplotlib.pyplot as plt
 seed = 123
 np.random.seed(seed)
 import statistics
 
-b0 = np.array([[0.5]])
-b1 = np.array([[1.1]])
-k0 = np.array([[-0.35]])
-k1 = np.array([[0.35]])
+b0 = np.array([[0.1, -0.1, 0.5, -0.5, 0.7, 2.0, 1.2, 0.6, 1.2, -0.2, 0.1, 1.2, 0.3, 1.0, 0.8, -0.9, -0.2, -0.2, 0.8, 2.0]])
+b1 = np.array([[0.0, 0.0, 1.1, 1.1, 1.4, -0.3, -0.3, 1.7, 1.3, 0.9, 1.6, 0.6, 1.3, -0.2, 2.0, 1.6, -0.9, -0.2, -0.8, 1.1]])
+k0 = np.array([-0.35])
+k1 = np.array([0.35])
 dy = 1
-dz = 1 
+dz = 20
 
 
 def main_cp(N, tvc, SIMSIZE=120, gap=True):
@@ -72,6 +72,7 @@ def main_cp(N, tvc, SIMSIZE=120, gap=True):
             knn_res += LL_knn
         
         
+
         print(f'{k+1}/{SIMSIZE} complete.')
      
     ridge_res /= SIMSIZE
@@ -82,7 +83,7 @@ def main_cp(N, tvc, SIMSIZE=120, gap=True):
     
     
 # true Vc value 
-tvc = true_vc_prod1dim(b0.item(), b1.item(), k0.item(), k1.item())
+tvc = true_vc_prod20dim(b0.reshape(-1), b1.reshape(-1), k0, k1)
 
 # main run
 gap=True
@@ -113,8 +114,8 @@ if not gap:
 
 plt.xlabel('Sample size')
 plt.ylabel('Average relative error')
-plt.ylim(-0.01, 1.2)
+# plt.ylim(-0.01, 1.2)
 plt.legend()
-# plt.savefig("new500error_prod_error.pdf")
+plt.savefig("20dim_test_c.pdf")
 plt.show()
 

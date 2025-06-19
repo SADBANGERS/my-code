@@ -293,7 +293,25 @@ def true_vc_prod1dim(
 
     return result
 
+def true_vc_prod20dim(
+        b0: np.ndarray,
+        b1: np.ndarray,
+        k0: float,
+        k1: float,
+        SIM: int = 5000,
+    ) -> float:
+    Z = np.random.randn(SIM, 20)
     
+    # 使用元素乘法并按行求和
+    term1 = np.abs(np.sum(Z * b0, axis=1) + k0)
+    term2 = np.abs(np.sum(Z * b1, axis=1) + k1)
+    
+    squared_diff = (term1 - term2) ** 2
+    result = np.mean(squared_diff)
+    
+    return result
+
+
     
 
 def true_vu1dim(
