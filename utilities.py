@@ -1042,6 +1042,59 @@ def ot_compute(dist_a, dist_b, p):
     return ot_distance, transport_matrix
     
 
+def ot_compute_cosine(dist_a, dist_b):
+    """
+    计算两个经验分布之间基于余弦距离的最优传输(OT)距离
+    
+    参数:
+        dist_a: 元组(support_a, weights_a)，表示第一个分布的支撑点和权重
+        dist_b: 元组(support_b, weights_b)，表示第二个分布的支撑点和权重
+        
+    返回:
+        元组(ot_distance, transport_matrix)，包含OT距离和传输矩阵
+    """
+    support_a, weights_a = dist_a
+    support_b, weights_b = dist_b
+    
+    # 确保输入是numpy数组
+    support_a = np.asarray(support_a)
+    support_b = np.asarray(support_b)
+    
+    # 标准化向量以计算余弦距离
+    def normalize_vectors(vectors):
+        """将向量归一化为单位长度"""
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        # 避免除以零
+        norms[norms == 0] = 1  
+        return vectors / norms
+    
+    # 处理一维情况（假设为单特征的多个样本）
+    if support_a.ndim == 1:
+        support_a = support_a.reshape(-1, 1)
+    if support_b.ndim == 1:
+        support_b = support_b.reshape(-1, 1)
+    
+    # 标准化支撑点向量
+    norm_a = normalize_vectors(support_a)
+    norm_b = normalize_vectors(support_b)
+    
+    # 计算余弦相似度矩阵（点积）
+    cos_sim_matrix = np.dot(norm_a, norm_b.T)
+    
+    # 转换为余弦距离矩阵 (1 - 余弦相似度)
+    M = 1.0 - cos_sim_matrix
+    
+    # 可选：归一化成本矩阵以提高数值稳定性
+    if np.max(M) > 0:
+        M = M / np.max(M)
+    
+    # 计算最优传输
+    transport_matrix = emd(weights_a, weights_b, M)
+    ot_distance = np.sum(M * transport_matrix)
+    
+    return ot_distance, transport_matrix
+
+
 def cot_estimator(control_data, treatment_data, c=0.5):
     """
     Estimates the Conditional Optimal Transport (COT) distance between two datasets.
@@ -1057,13 +1110,13 @@ def cot_estimator(control_data, treatment_data, c=0.5):
     # Step 2: Optimal transport matrix (L) between Z distributions
     distZ_control = (control_z_support, control_z_weights)
     distZ_treatment = (treatment_z_support, treatment_z_weights)
-    _, L = ot_compute(distZ_control, distZ_treatment, 1)
+    _, L = ot_compute_cosine(distZ_control, distZ_treatment)
 
     # Step 3 & 4: Compute transport cost matrix M and the final COT estimate
     M = np.zeros((len(control_z_support), len(treatment_z_support)))
     for i, z_c in enumerate(control_z_support):
         for j, z_t in enumerate(treatment_z_support):
-            ot_d, _ = ot_compute(control_conditional_y[tuple(z_c)], treatment_conditional_y[tuple(z_t)], 2)
+            ot_d, _ = ot_compute_cosine(control_conditional_y[tuple(z_c)], treatment_conditional_y[tuple(z_t)])
             M[i, j] = ot_d
 
     cot_estimate = np.sum(M * L)
