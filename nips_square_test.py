@@ -12,10 +12,10 @@ import statistics
 seed = 123
 np.random.seed(seed)
 
-b0 = np.round(np.random.uniform(-1, 2, size=(1,100)), 1)
-b1 = np.round(np.random.uniform(-1, 2, size=(1,100)), 1)
+b0 = np.array([[0.1, -0.1, 0.5, -0.5, 0.7, 2.0, 1.2, 0.6, 1.2, -0.2, 0.1, 1.2, 0.3, 1.0, 0.8, -0.9, -0.2, -0.2, 0.8, 2.0]])
+b1 = np.array([[0.0, 0.0, 1.1, 1.1, 1.4, -0.3, -0.3, 1.7, 1.3, 0.9, 1.6, 0.6, 1.3, -0.2, 2.0, 1.6, -0.9, -0.2, -0.8, 1.1]])
 dy = 1
-dz = 100
+dz = 20
 
 
 def main_cp(N, tvc, SIMSIZE=120, gap=True):
@@ -86,7 +86,7 @@ tvc = true_vc_square(-b0, b1)
 # main run
 gap=True  #record estimation error (True) or estimation value (False)
 
-sizelist = [200, 600, 1000]
+sizelist = [200, 600, 1000, 1400, 1800]
 ridge_reslist = []
 knn_reslist = []
 cot_reslist_mean = []
@@ -113,6 +113,6 @@ plt.xlabel('Sample size')
 plt.ylabel('Average relative error')
 # plt.ylim(-0.01, 0.8)
 plt.legend()
-plt.savefig("100dim_test_b.pdf")
+plt.savefig("20dim_test_b.pdf")
 plt.show()
 
