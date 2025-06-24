@@ -86,14 +86,14 @@ tvc = true_vcmdim(b0, b1)
 # main run
 gap=True #record estimation error (True) or estimation value (False)
 
-sizelist = [200, 600, 1000]
+sizelist = [200, 600, 1000, 1400, 1800]
 ridge_reslist = []
 knn_reslist = []
 cot_reslist_mean = []
 cot_reslist_std = []
 
 for sz in sizelist:
-    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=500, gap=gap)
+    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=10, gap=gap)
     ridge_reslist.append(ridge_res)
     knn_reslist.append(knn_res)
     cot_reslist_mean.append(statistics.mean(cot_res))
@@ -113,7 +113,7 @@ plt.xlabel('Sample size')
 plt.ylabel('Average relative error')
 # plt.ylim(-0.01, 0.17)
 plt.legend()
-plt.savefig("100dim_test_a.pdf")
+plt.savefig("100dim_cos_a.pdf")
 plt.show()
 
 

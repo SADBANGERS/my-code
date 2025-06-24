@@ -91,7 +91,7 @@ tvc = true_vc_prod20dim(b0.reshape(-1), b1.reshape(-1), k0, k1)
 # main run
 gap=True
 
-sizelist = [200, 600, 1000]
+sizelist = [200, 600, 1000, 1400, 1800]
 ridge_reslist = []
 knn_reslist = []
 cot_reslist_mean = []
@@ -99,7 +99,7 @@ cot_reslist_std = []
 
 
 for sz in sizelist:
-    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=500, gap=gap)
+    ridge_res, knn_res, cot_res = main_cp(sz, tvc, SIMSIZE=10, gap=gap)
     ridge_reslist.append(ridge_res)
     knn_reslist.append(knn_res)
     cot_reslist_mean.append(statistics.mean(cot_res))
@@ -119,6 +119,6 @@ plt.xlabel('Sample size')
 plt.ylabel('Average relative error')
 # plt.ylim(-0.01, 1.2)
 plt.legend()
-plt.savefig("100dim_test_c.pdf")
+plt.savefig("100dim_cos_c.pdf")
 plt.show()
 

@@ -2,6 +2,8 @@ import numpy as np
 import numpy.typing as npt
 from typing import Tuple
 import pandas as pd
+from sklearn.neighbors import KernelDensity
+from collections import defaultdict
 
 def generate_data(
         N: int,
@@ -893,45 +895,73 @@ def cluster_z_values(data, c=0.3):
 
 from sklearn.cluster import KMeans
 
-def discretize_high_dim_kmeans(data, n_clusters=None, c=0.3):
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import AgglomerativeClustering # <--- 替换 KMeans
+from sklearn.metrics.pairwise import cosine_distances
+
+def discretize_high_dim_kmeans(data, n_clusters=None, c=0.5):
     """
-    使用K-means对高维协变量进行全局离散化。
+    使用基于余弦距离的层次聚类对高维协变量进行全局离散化。
+    这个版本修正了原先未使用余弦距离的问题。
     
     Args:
-        data: 形状为 (n_samples, dz+1) 的数组，dz=20。
+        data: 形状为 (n_samples, dz+1) 的数组。
         n_clusters: 聚类数量，若为None则根据样本量自动计算。
         c: 控制聚类数量的参数（当n_clusters为None时使用）。
         
     Returns:
-        离散化后的数组，形状与输入相同。
+        离散化后的数组，形状与输入相同，其中协变量被替换为对应簇的中心。
     """
     n_samples = data.shape[0]
-    data = data[:, 1:]
+    # 提取第一列（通常是结果 Y）和协变量 Z
+    y_column = data[:, 0].reshape(-1, 1)
+    z_data = data[:, 1:]
     
-    # 自动确定聚类数量
+    # 1. 自动确定聚类数量 (逻辑保持不变)
     if n_clusters is None:
         n_clusters = max(2, int(c * n_samples**(1/3)))
     
-    # 标准化数据（K-means对尺度敏感）
-    from sklearn.preprocessing import StandardScaler
+    # 2. 标准化数据 (对于计算中心点仍然是好的实践)
     scaler = StandardScaler()
-    data_scaled = scaler.fit_transform(data)
+    z_data_scaled = scaler.fit_transform(z_data)
     
-    # 应用K-means
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    cluster_labels = kmeans.fit_predict(data_scaled)
+    # 3. 计算余弦距离矩阵 (这是将要用于聚类的输入)
+    # 余弦距离 = 1 - 余弦相似度
+    cosine_distance_matrix = cosine_distances(z_data_scaled)
     
-    # 为每个样本分配其所属簇的中心
-    discretized_data = np.zeros_like(data)
+    # 4. 【核心修改】应用基于预计算余弦距离的层次聚类
+    # 我们使用 AgglomerativeClustering，因为它接受一个预计算的距离矩阵
+    # linkage='average' 表示簇间距离是所有点对距离的平均值，是一个稳健的选择
+    clustering = AgglomerativeClustering(n_clusters=n_clusters, 
+                                         metric='precomputed', # 或 affinity='precomputed'
+                                         linkage='average')
+    cluster_labels = clustering.fit_predict(cosine_distance_matrix)
+    
+    # 5. 【核心修改】手动计算每个簇的中心
+    # AgglomerativeClustering 本身不返回 'cluster_centers_'
+    # 我们将簇中心定义为簇内所有（缩放后）点的均值
+    cluster_centers_scaled = np.zeros((n_clusters, z_data_scaled.shape[1]))
+    for i in range(n_clusters):
+        # 找到属于当前簇 i 的所有样本的索引
+        mask = (cluster_labels == i)
+        if np.sum(mask) > 0: # 确保簇不为空
+            # 计算这些样本在缩放后空间中的均值
+            cluster_centers_scaled[i] = z_data_scaled[mask].mean(axis=0)
+
+    # 6. 为每个样本分配其所属簇的中心
+    discretized_z_scaled = np.zeros_like(z_data_scaled)
     for i in range(n_clusters):
         mask = (cluster_labels == i)
-        discretized_data[mask] = kmeans.cluster_centers_[i]
+        discretized_z_scaled[mask] = cluster_centers_scaled[i]
     
-    # 反标准化回原始尺度
-    discretized_data = scaler.inverse_transform(discretized_data)
-    cluster_data = np.column_stack((data[:, 0], discretized_data))
+    # 7. 反标准化回原始尺度
+    discretized_z_original_scale = scaler.inverse_transform(discretized_z_scaled)
     
-    return cluster_data
+    # 8. 将原始的第一列与离散化后的协变量重新组合
+    discretized_data = np.column_stack((y_column, discretized_z_original_scale))
+    
+    return discretized_data
+
 
 
 from collections import defaultdict
@@ -998,6 +1028,125 @@ def calculate_empirical_distributions(clustered_data):
         corresponding_y = y_values[indices]
         y_support, y_weights = empirical_distribution(corresponding_y)
         conditional_y_distributions[tuple(z)] = (y_support, y_weights)
+
+    return z_support, z_weights, conditional_y_distributions
+
+
+
+def conditional_kde_estimation(data, covariate_columns, result_column=0, bandwidth=None, 
+                               y_grid_points=100, y_grid_buffer_factor=0.2):
+    """
+    针对离散化（聚类中心）的协变量，生成结果变量的条件核密度估计（KDE），
+    并以与 calculate_empirical_distributions 函数相似的结构返回结果。
+
+    Args:
+        data (np.ndarray): 输入数据，第一列是结果变量，后面是协变量（已聚类到中心）。
+                           例如：[[y1, x1_center, x2_center], [y2, x1_center, x2_center], ...]
+        covariate_columns (list): 包含协变量列索引的列表，例如 [1, 2]。
+        result_column (int): 结果变量的列索引，默认为 0。
+        bandwidth (float or dict, optional): KDE 的带宽参数。
+                                            - 如果为 float，则所有条件 KDE 都使用该带宽。
+                                            - 如果为 dict，键为协变量中心的元组，值为对应的带宽。
+                                            - 如果为 None，将使用 sklearn KernelDensity 的默认带宽 (1.0)。
+                                            建议通过 GridSearchCV 等方法优化带宽。
+        y_grid_points (int): 用于离散化每个条件 KDE 分布的 Y 值网格点数量。
+        y_grid_buffer_factor (float): 用于扩展 Y 值网格范围的缓冲因子。
+                                      例如，如果 Y 范围是 [min_y, max_y]，网格将是 
+                                      [min_y - factor*(max_y-min_y), max_y + factor*(max_y-min_y)]。
+
+    Returns:
+        tuple: 包含以下元素：
+            - z_support (np.ndarray): 协变量集群中心的唯一组合。
+                                      形状为 (n_unique_clusters, n_covariates)。
+            - z_weights (np.ndarray): 每个协变量集群中心的权重（频率）。
+            - conditional_y_distributions (dict): 字典，键是表示集群中心的元组（条件），
+                                                值是一个元组 (y_support, y_weights)，
+                                                其中 y_support 是用于 KDE 离散化的 Y 值网格点，
+                                                y_weights 是这些点对应的归一化密度（作为概率）。
+    """
+    results = data[:, result_column]
+    covariates = data[:, covariate_columns]
+
+    # 1. 计算 z_support 和 z_weights
+    # np.unique 返回唯一的行，并按行顺序返回索引和计数
+    z_support_raw, counts = np.unique(covariates, axis=0, return_counts=True)
+    z_support = z_support_raw # 保持为 numpy 数组以便与 calculate_empirical_distributions 的 z_support 匹配
+    z_weights = counts.astype(float) / len(data)
+
+    conditional_y_distributions = defaultdict(lambda: (np.array([]), np.array([])))
+
+    for i, cov_center_array in enumerate(z_support_raw):
+        cov_center_tuple = tuple(cov_center_array) # 使用元组作为字典键
+
+        # 查找属于当前协变量中心的样本
+        # 确保使用 np.all 检查所有协变量维度是否匹配
+        mask = np.all(covariates == cov_center_array, axis=1)
+        
+        # 提取当前条件下的结果变量
+        conditional_results = results[mask]
+
+        if len(conditional_results) == 0:
+            print(f"Warning: No data for covariate center {cov_center_tuple}. Skipping KDE.")
+            continue
+        
+        # Reshape for KernelDensity, which expects 2D array [n_samples, n_features]
+        # Here, n_features is 1 for the result variable
+        conditional_results_reshaped = conditional_results.reshape(-1, 1)
+
+        current_bandwidth = None
+        if isinstance(bandwidth, dict):
+            current_bandwidth = bandwidth.get(cov_center_tuple)
+        elif isinstance(bandwidth, (int, float)):
+            current_bandwidth = bandwidth
+        
+        try:
+            if current_bandwidth is None:
+                # 使用默认的 KDE 初始化 (bandwidth=1.0)
+                kde = KernelDensity() 
+            else:
+                kde = KernelDensity(bandwidth=current_bandwidth)
+            
+            kde.fit(conditional_results_reshaped)
+
+            # 2. 从拟合的 KDE 生成 (y_support, y_weights)
+            # 定义 Y 的网格范围
+            current_y_min = conditional_results.min()
+            current_y_max = conditional_results.max()
+            y_range_diff = current_y_max - current_y_min
+            
+            # 考虑极端情况，如果所有 conditional_results 都相同
+            if y_range_diff == 0:
+                y_range_min = current_y_min - 0.5 # Give some arbitrary small range
+                y_range_max = current_y_max + 0.5
+            else:
+                y_range_min = current_y_min - y_range_diff * y_grid_buffer_factor
+                y_range_max = current_y_max + y_range_diff * y_grid_buffer_factor
+            
+            y_grid = np.linspace(y_range_min, y_range_max, y_grid_points)
+            y_grid_reshaped = y_grid.reshape(-1, 1)
+
+            # 计算对数密度和密度
+            log_densities = kde.score_samples(y_grid_reshaped)
+            densities = np.exp(log_densities)
+
+            # 将密度归一化为权重 (近似于离散概率质量函数)
+            # 确保和不为零，避免除以零错误
+            sum_densities = np.sum(densities)
+            if sum_densities > 0:
+                normalized_weights = densities / sum_densities
+            else: # 如果所有密度都为0 (例如，只有1个样本且带宽过小)
+                normalized_weights = np.zeros_like(densities)
+            
+            conditional_y_distributions[cov_center_tuple] = (y_grid, normalized_weights)
+
+        except ValueError as e:
+            print(f"Error fitting KDE for covariate center {cov_center_tuple}: {e}")
+            print(f"Number of samples for this center: {len(conditional_results)}")
+            if len(conditional_results) == 1:
+                print("KDE usually requires more than one sample for density estimation.")
+            # 对于无法拟合的条件，保留其默认的空数组
+            conditional_y_distributions[cov_center_tuple] = (np.array([]), np.array([]))
+            continue
 
     return z_support, z_weights, conditional_y_distributions
 
@@ -1104,8 +1253,8 @@ def cot_estimator(control_data, treatment_data, c=0.5):
     clustered_treatment_data = discretize_high_dim_kmeans(treatment_data)
 
     # Step 1: Compute empirical distributions for each dataset
-    control_z_support, control_z_weights, control_conditional_y = calculate_empirical_distributions(clustered_control_data)
-    treatment_z_support, treatment_z_weights, treatment_conditional_y = calculate_empirical_distributions(clustered_treatment_data)
+    control_z_support, control_z_weights, control_conditional_y = conditional_kde_estimation(clustered_control_data, covariate_columns=list(range(1, 101)))
+    treatment_z_support, treatment_z_weights, treatment_conditional_y = conditional_kde_estimation(clustered_treatment_data, covariate_columns=list(range(1, 101)))
 
     # Step 2: Optimal transport matrix (L) between Z distributions
     distZ_control = (control_z_support, control_z_weights)
@@ -1116,7 +1265,7 @@ def cot_estimator(control_data, treatment_data, c=0.5):
     M = np.zeros((len(control_z_support), len(treatment_z_support)))
     for i, z_c in enumerate(control_z_support):
         for j, z_t in enumerate(treatment_z_support):
-            ot_d, _ = ot_compute_cosine(control_conditional_y[tuple(z_c)], treatment_conditional_y[tuple(z_t)])
+            ot_d, _ = ot_compute(control_conditional_y[tuple(z_c)], treatment_conditional_y[tuple(z_t)], p=2)
             M[i, j] = ot_d
 
     cot_estimate = np.sum(M * L)
